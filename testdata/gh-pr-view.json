@@ -1,0 +1,31 @@
+{
+ "number": 41,
+ "title": "Fix login",
+ "author": {
+  "login": "ana",
+  "is_bot": false
+ },
+ "isDraft": false,
+ "state": "OPEN",
+ "headRefName": "fix/login",
+ "baseRefName": "main",
+ "reviewDecision": "APPROVED",
+ "url": "https://github.com/owner/name/pull/41",
+ "updatedAt": "2026-10-26T10:00:00Z",
+ "mergeable": "MERGEABLE",
+ "body": "Fixes the login.\nSecond line.",
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "name": "build",
+   "status": "COMPLETED",
+   "conclusion": "SUCCESS"
+  },
+  {
+   "__typename": "CheckRun",
+   "name": "lint",
+   "status": "COMPLETED",
+   "conclusion": "SKIPPED"
+  }
+ ]
+}

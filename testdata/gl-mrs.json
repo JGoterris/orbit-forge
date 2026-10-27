@@ -1,0 +1,5 @@
+[
+  {"iid":5,"title":"Fix login","description":"Fixes it","author":{"username":"ana"},"draft":false,"state":"opened","source_branch":"fix/login","target_branch":"main","web_url":"https://gitlab.example.com/owner/name/-/merge_requests/5","updated_at":"2026-10-26T10:00:00Z","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"}},
+  {"iid":6,"title":"Draft: search","description":"","author":{"username":"bo"},"draft":true,"state":"opened","source_branch":"feat/search","target_branch":"main","web_url":"https://gitlab.example.com/owner/name/-/merge_requests/6","updated_at":"2026-10-25T10:00:00Z","detailed_merge_status":"ci_must_pass","head_pipeline":{"status":"failed"}},
+  {"iid":7,"title":"No pipeline yet","description":"","author":{"username":"cy"},"draft":false,"state":"opened","source_branch":"x","target_branch":"main","web_url":"https://gitlab.example.com/owner/name/-/merge_requests/7","updated_at":"2026-10-24T10:00:00Z","detailed_merge_status":"checking","head_pipeline":null}
+]

@@ -1,0 +1,8 @@
+[
+  {"number":41,"title":"Fix login","author":{"login":"ana","is_bot":false},"isDraft":false,"state":"OPEN","headRefName":"fix/login","baseRefName":"main","reviewDecision":"APPROVED","url":"https://github.com/owner/name/pull/41","updatedAt":"2026-10-26T10:00:00Z","mergeable":"MERGEABLE","body":"Fixes the login.\nSecond line.",
+   "statusCheckRollup":[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SKIPPED"}]},
+  {"number":42,"title":"Add search","author":{"login":"bo","is_bot":false},"isDraft":true,"state":"OPEN","headRefName":"feat/search","baseRefName":"main","reviewDecision":"","url":"https://github.com/owner/name/pull/42","updatedAt":"2026-10-25T10:00:00Z","mergeable":"UNKNOWN",
+   "statusCheckRollup":[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"ci/legacy","state":"SUCCESS"}]},
+  {"number":43,"title":"Update deps","author":{"login":"app/dependabot","is_bot":true},"isDraft":false,"state":"OPEN","headRefName":"deps","baseRefName":"main","reviewDecision":"REVIEW_REQUIRED","url":"https://github.com/owner/name/pull/43","updatedAt":"2026-10-20T10:00:00Z","mergeable":"CONFLICTING",
+   "statusCheckRollup":[{"__typename":"CheckRun","name":"build","status":"IN_PROGRESS","conclusion":""}]}
+]

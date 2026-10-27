@@ -1,0 +1,1 @@
+[{"id":71,"name":"build","status":"success","stage":"build"},{"id":72,"name":"test","status":"failed","stage":"test"},{"id":73,"name":"deploy","status":"manual","stage":"deploy"}]

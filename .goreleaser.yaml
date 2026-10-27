@@ -1,0 +1,18 @@
+version: 2
+project_name: orbit-forge
+builds:
+  - main: .
+    binary: orbit-forge
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - { goos: windows, formats: [zip] }
+    # orbit looks for orbit-forge_<os>_<arch>.tar.gz (.zip on Windows) in the release
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - orbit-plugin.yaml
+checksum:
+  name_template: checksums.txt

@@ -1,0 +1,7 @@
+[
+  {"databaseId":501,"name":"CI","displayTitle":"fix login","status":"completed","conclusion":"success","headBranch":"main","event":"push","createdAt":"2026-10-26T10:00:00Z","url":"https://github.com/owner/name/actions/runs/501"},
+  {"databaseId":502,"name":"CI","displayTitle":"add search","status":"completed","conclusion":"failure","headBranch":"feat/search","event":"pull_request","createdAt":"2026-10-26T09:00:00Z","url":"https://github.com/owner/name/actions/runs/502"},
+  {"databaseId":503,"name":"Release","displayTitle":"v1","status":"in_progress","conclusion":"","headBranch":"main","event":"push","createdAt":"2026-10-26T08:00:00Z","url":"https://github.com/owner/name/actions/runs/503"},
+  {"databaseId":504,"name":"CI","displayTitle":"wip","status":"queued","conclusion":"","headBranch":"wip","event":"push","createdAt":"2026-10-26T07:00:00Z","url":"https://github.com/owner/name/actions/runs/504"},
+  {"databaseId":505,"name":"CI","displayTitle":"old","status":"completed","conclusion":"cancelled","headBranch":"old","event":"push","createdAt":"2026-10-20T07:00:00Z","url":"https://github.com/owner/name/actions/runs/505"}
+]
