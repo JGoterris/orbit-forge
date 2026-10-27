@@ -3,6 +3,9 @@
 A plugin for [orbit](https://github.com/JGoterris/orbit): the merge requests and the CI of your repositories, in orbit,
 with [`gh`](https://cli.github.com) for GitHub and [`glab`](https://gitlab.com/gitlab-org/cli) for GitLab.
 
+> **Alpha.** This is the first plugin for orbit and it is young: it needs orbit 1.5 or later, GitLab has only been
+> tested against a fake `glab`, and keys, settings and behavior may change between versions.
+
 It adds two tabs, **MR** and **CI**, that follow the service you select (the repository of its folder), and:
 
 - a **badge** on every service with the merge request of its branch (`#41 ✓`), or the state of its CI when it has none;
@@ -44,6 +47,7 @@ In `config.json` of orbit (or `plugins:` of `orbit.yaml`):
 
 ## Limits
 
+- Alpha: expect rough edges, and please open an issue when you find one.
 - GitLab is covered by tests with a fake `glab`, not by a real GitLab. Reads go through `glab api`.
 - The list of merge requests does not say whether it is approved on GitLab until you open it.
 
