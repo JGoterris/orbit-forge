@@ -46,8 +46,6 @@ In `config.json` of orbit (or `plugins:` of `orbit.yaml`):
 
 - GitLab is covered by tests with a fake `glab`, not by a real GitLab. Reads go through `glab api`.
 - The list of merge requests does not say whether it is approved on GitLab until you open it.
-- Nothing is published: `go.mod` points to a local checkout of orbit (`replace`) until the plugin SDK is in a release of
-  orbit. Drop that line before tagging.
 
 ## Develop
 

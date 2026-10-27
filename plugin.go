@@ -467,7 +467,6 @@ func (a *app) poll(interval time.Duration) {
 }
 
 type polled struct {
-	badge   protocol.Badge
 	mr      *MR
 	run     *Run
 	hasRun  bool
