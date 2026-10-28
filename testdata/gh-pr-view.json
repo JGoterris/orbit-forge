@@ -13,7 +13,7 @@
  "url": "https://github.com/owner/name/pull/41",
  "updatedAt": "2026-10-26T10:00:00Z",
  "mergeable": "MERGEABLE",
- "body": "Fixes the login.\nSecond line.",
+ "body": "## Why\r\n<!-- template: say why -->\r\nFixes the **login** with `token`.\r\n\r\n- [x] tests\r\n- see [the issue](https://x/1)\r\n\r\n```\r\ncode here\r\n```",
  "statusCheckRollup": [
   {
    "__typename": "CheckRun",
@@ -26,6 +26,84 @@
    "name": "lint",
    "status": "COMPLETED",
    "conclusion": "SKIPPED"
+  }
+ ],
+ "createdAt": "2026-10-20T10:00:00Z",
+ "additions": 120,
+ "deletions": 30,
+ "changedFiles": 2,
+ "labels": [
+  {
+   "name": "bug"
+  },
+  {
+   "name": "auth"
+  }
+ ],
+ "assignees": [
+  {
+   "login": "ana"
+  }
+ ],
+ "milestone": {
+  "title": "v2"
+ },
+ "autoMergeRequest": null,
+ "files": [
+  {
+   "path": "login.go",
+   "additions": 100,
+   "deletions": 20
+  },
+  {
+   "path": "login_test.go",
+   "additions": 20,
+   "deletions": 10
+  }
+ ],
+ "commits": [
+  {
+   "oid": "abcdef1234567",
+   "messageHeadline": "fix the token",
+   "authoredDate": "2026-10-21T10:00:00Z",
+   "authors": [
+    {
+     "login": "ana",
+     "name": "Ana"
+    }
+   ]
+  }
+ ],
+ "comments": [
+  {
+   "author": {
+    "login": "bo"
+   },
+   "body": "Looks good, one nit.",
+   "createdAt": "2026-10-22T10:00:00Z"
+  }
+ ],
+ "latestReviews": [
+  {
+   "author": {
+    "login": "bo"
+   },
+   "state": "APPROVED"
+  },
+  {
+   "author": {
+    "login": "cy"
+   },
+   "state": "CHANGES_REQUESTED"
+  }
+ ],
+ "reviewRequests": [
+  {
+   "login": "cy"
+  },
+  {
+   "slug": "core-team",
+   "name": "Core"
   }
  ]
 }

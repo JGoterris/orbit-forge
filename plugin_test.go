@@ -79,6 +79,24 @@ func (f *fakeForge) Rerun(_ *Repo, id string, failed bool) error {
 	return f.err
 }
 func (f *fakeForge) Cancel(_ *Repo, id string) error { f.rec("Cancel %s", id); return f.err }
+func (f *fakeForge) Comment(_ *Repo, id, body string) error {
+	f.rec("Comment %s %s", id, body)
+	return f.err
+}
+func (f *fakeForge) SetDraft(_ *Repo, id string, draft bool) error {
+	f.rec("SetDraft %s %v", id, draft)
+	return f.err
+}
+func (f *fakeForge) Workflows(*Repo) ([]Workflow, error) {
+	return []Workflow{{ID: "ci.yml", Name: "CI (ci.yml)"}, {ID: "deploy.yml", Name: "Deploy (deploy.yml)"}}, f.err
+}
+func (f *fakeForge) Start(_ *Repo, wf, branch string) error {
+	f.rec("Start %s %s", wf, branch)
+	return f.err
+}
+func (f *fakeForge) Branches(*Repo) ([]string, error) {
+	return []string{"main", "feature", "other"}, f.err
+}
 
 // recorder is what the plugin told orbit on its own.
 type recorder struct {
@@ -213,12 +231,12 @@ func TestMRInfoDetailsTheSelectedOne(t *testing.T) {
 		t.Fatalf("calls = %v", f.did())
 	}
 	d, err := a.mrInfo(req("api", map[string]string{"list": "41"}))
-	if err != nil || len(d.Detail.Sections) != 2 {
+	if err != nil || len(d.Detail.Sections) != 3 {
 		t.Fatalf("%+v %v", d, err)
 	}
-	head, checks := d.Detail.Sections[0], d.Detail.Sections[1]
-	if head.Title != "#41 Fix login" || len(head.Text) != 2 || checks.Title != "Checks" {
-		t.Fatalf("head = %+v checks = %+v", head, checks)
+	head, checks, desc := d.Detail.Sections[0], d.Detail.Sections[1], d.Detail.Sections[2]
+	if head.Title != "#41 Fix login" || checks.Title != "Checks · 1 pass · 1 fail" || desc.Title != "Description" || len(desc.Text) != 2 {
+		t.Fatalf("head = %+v checks = %+v desc = %+v", head, checks, desc)
 	}
 	got := map[string]string{}
 	for _, f := range head.Fields {
@@ -227,8 +245,9 @@ func TestMRInfoDetailsTheSelectedOne(t *testing.T) {
 	if got["state"] != "open" || got["branch"] != "feature → main" || got["review"] != "approved" || got["checks"] != "pass" || got["updated"] != "3h ago" {
 		t.Fatalf("fields = %v", got)
 	}
-	if checks.Fields[1].Label != "lint" || checks.Fields[1].Tone != protocol.ToneError {
-		t.Fatalf("checks = %+v", checks.Fields)
+	// the failing ones first
+	if first := checks.Text[0]; first[1].Text != "lint" || first[0].Tone != protocol.ToneError {
+		t.Fatalf("checks = %+v", checks.Text)
 	}
 }
 
@@ -259,7 +278,7 @@ func (a *app) p0(t *testing.T, id string) (*protocol.InvokeResult, error) {
 }
 
 func TestCILogShowsTheJobsAndTheFailedOnes(t *testing.T) {
-	f := &fakeForge{kind: "github", jobs: []Job{{"1", "build", "success"}, {"2", "test", "failure"}}, log: "step ok\n\x1b[31mERROR: boom\x1b[0m\nlast"}
+	f := &fakeForge{kind: "github", jobs: []Job{{ID: "1", Name: "build", Status: "success"}, {ID: "2", Name: "test", Status: "failure", Steps: []Step{{"checkout", "success"}, {"go test", "failure"}}}}, log: "step ok\n\x1b[31mERROR: boom\x1b[0m\nlast"}
 	a, _ := newTestApp(t, f)
 	d, err := a.ciLog(req("api", map[string]string{"list": "7"}))
 	if err != nil || d.Text == nil {
@@ -274,7 +293,7 @@ func TestCILogShowsTheJobsAndTheFailedOnes(t *testing.T) {
 		text = append(text, s)
 	}
 	all := strings.Join(text, "\n")
-	for _, want := range []string{"✓ build", "✖ test", "failed jobs", "ERROR: boom", "last"} {
+	for _, want := range []string{"✖ test", "✖ go test", "✓ 1 step passed", "output of the failed jobs", "ERROR: boom", "last"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the log lacks %q:\n%s", want, all)
 		}
@@ -282,7 +301,11 @@ func TestCILogShowsTheJobsAndTheFailedOnes(t *testing.T) {
 	if strings.Contains(all, "\x1b") {
 		t.Error("colour codes must be dropped")
 	}
-	f.jobs = []Job{{"1", "build", "success"}}
+	if strings.Contains(all, "build") {
+		t.Error("a job that passed is in the graph, not among the failures")
+	}
+	f.jobs = []Job{{ID: "1", Name: "build", Status: "success"}}
+	a.jobs = map[string]cachedJobs{}
 	f.reset()
 	a.ciLog(req("api", map[string]string{"list": "7"}))
 	for _, c := range f.did() {
@@ -465,5 +488,49 @@ func TestSectionOfTheDetailComesFromTheLastPoll(t *testing.T) {
 	}
 	if len(f.did()) != 0 {
 		t.Fatal("selecting a service must not hit the forge: it is the poll that does")
+	}
+}
+
+func TestFailuresPutTheErrorsFirstAndFoldTheSetUp(t *testing.T) {
+	out := "── test\n##[group]Run actions/setup-go@v5\nwith:\n  go-version: 1.26\n##[endgroup]\n/usr/bin/tar: Cannot open: File exists\n" +
+		"##[group]Run go test ./...\ngo test ./...\n##[endgroup]\n" +
+		"--- FAIL: TestLogin (0.01s)\n    login_test.go:42: got 401\n##[warning]Node.js 20 is deprecated\n##[error]Process completed with exit code 1."
+	got := render(failureLines(out))
+	want := `
+── errors
+✖ --- FAIL: TestLogin (0.01s)
+✖ login_test.go:42: got 401
+✖ Process completed with exit code 1.
+
+── output of the step that failed
+▸ Run go test ./...
+--- FAIL: TestLogin (0.01s)
+    login_test.go:42: got 401
+▲ Node.js 20 is deprecated
+##[error]Process completed with exit code 1.
+`
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRunTitleOfAMerge(t *testing.T) {
+	if got := runTitle("Merge pull request #10 from JGoterris/feature/plugins"); got != "#10 feature/plugins" {
+		t.Fatalf("got %q", got)
+	}
+	if got := runTitle("fix: something"); got != "fix: something" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestFailuresFoldTheSameMessageOverAndOver(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&b, "/usr/bin/tar: ../../../go/pkg/mod/golang.org/toolchain/src/image/testdata/file-%d.png: Cannot open: File exists\n", i)
+	}
+	b.WriteString("--- FAIL: TestX")
+	got := render(failureLines(b.String()))
+	if !strings.Contains(got, "file-0.png") || strings.Contains(got, "file-1.png") || !strings.Contains(got, "… and 29 more like it") {
+		t.Fatalf("got\n%s", got)
 	}
 }

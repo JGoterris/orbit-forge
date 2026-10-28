@@ -1,6 +1,7 @@
 name: forge
-version: 0.1.0
+version: 0.2.0
 api: 1
+minOrbit: 1.6.0
 description: Merge requests and CI of GitHub and GitLab, with gh and glab
 run: { command: [./orbit-forge, serve], windows: [./orbit-forge.exe, serve] }
 cli: { command: [./orbit-forge], windows: [./orbit-forge.exe] }
@@ -11,50 +12,79 @@ contributes:
       title: MR
       sidebar: services
       panes:
-        - { id: list, widget: list, title: Merge requests, weight: 2 }
-        - { id: info, widget: detail, title: Details, bind: list }
+        - { id: list, widget: list, title: Merge requests, weight: 3 }
+        - { id: info, widget: detail, title: Details, bind: list, weight: 2 }
     - id: ci
       title: CI
       sidebar: services
       panes:
         - { id: list, widget: list, title: Runs, weight: 2 }
-        - { id: log, widget: text, title: Jobs, bind: list }
+        - { id: graph, widget: text, title: Jobs, bind: list, sized: true, weight: 2 }
+        - { id: log, widget: text, title: Failures, bind: list, wrap: true, weight: 3 }
   actions:
-    - { id: mr-open, title: Open in the browser, key: o, scope: { view: mr, pane: list } }
+    - { id: mr-open, title: Open in the browser, key: o, scope: { view: mr, pane: list }, item: true }
     - id: mr-checkout
       title: Check out the branch
       key: c
       scope: { view: mr, pane: list }
+      item: true
       confirm: { title: "Check out the branch of {item}?" }
     - id: mr-approve
       title: Approve
       key: a
       scope: { view: mr, pane: list }
+      item: true
       confirm: { title: "Approve {item}?" }
     - id: mr-merge
       title: Merge
       key: M
       scope: { view: mr, pane: list }
+      item: true
       inputs:
         - { name: method, kind: pick, title: How, options: [squash, merge, rebase] }
       confirm: { title: "Merge {item} ({method})?", danger: true }
+    - id: mr-comment
+      title: Comment
+      key: m
+      scope: { view: mr, pane: list }
+      item: true
+      inputs:
+        - { name: body, kind: text, title: "Comment on {item}" }
+    - id: mr-draft
+      title: Mark as draft / ready for review
+      key: d
+      scope: { view: mr, pane: list }
+      item: true
+      confirm: { title: "Switch {item} between draft and ready for review?" }
     - id: mr-close
       title: Close
       key: x
       scope: { view: mr, pane: list }
+      item: true
       confirm: { title: "Close {item} without merging?", danger: true }
-    - { id: ci-open, title: Open in the browser, key: o, scope: { view: ci, pane: list } }
+    - { id: ci-open, title: Open in the browser, key: o, scope: { view: ci, pane: list }, item: true }
     - { id: ci-all, title: Runs of this branch / of all branches, key: b, scope: { view: ci, pane: list } }
     - id: ci-rerun
       title: Run again
       key: R
       scope: { view: ci, pane: list }
+      item: true
       confirm: { title: "Run {item} again?" }
     - id: ci-cancel
       title: Cancel
       key: C
       scope: { view: ci, pane: list }
+      item: true
       confirm: { title: "Cancel {item}?", danger: true }
+    - id: ci-run
+      title: Run now or later
+      key: s
+      scope: { view: ci, pane: list }
+      inputs:
+        - { name: workflow, kind: pick, title: Workflow, optionsFrom: true }
+        - { name: branch, kind: pick, title: Branch, optionsFrom: true }
+        - { name: when, kind: text, title: "When (now, 30m, 15:30, tomorrow 9:00)", default: now }
+      confirm: { title: "Run {workflow} on {branch} ({when})?" }
   serviceSections:
     - { id: mr, title: Merge request }
   serviceColumn: { id: mr, width: 9 }

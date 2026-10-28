@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRemote(t *testing.T) {
@@ -139,11 +140,28 @@ func TestGitHubListsMergeRequests(t *testing.T) {
 	}
 }
 
-func TestGitHubViewsOneMergeRequestWithItsChecks(t *testing.T) {
-	fakeTool(t, "gh", `case "$*" in *"pr view"*) cat "$D/gh-pr-view.json";; esac`)
+func TestGitHubViewsOneMergeRequestWithAllItHas(t *testing.T) {
+	calls := fakeTool(t, "gh", `case "$*" in *"pr view"*) cat "$D/gh-pr-view.json";; esac`)
 	mr, err := github{}.ViewMR(&Repo{Root: t.TempDir(), Slug: "o/n"}, "41")
-	if err != nil || mr.Body != "Fixes the login.\nSecond line." || len(mr.CheckList) != 2 || mr.CheckList[1].Status != "skip" {
+	if err != nil || !strings.Contains(mr.Body, "Fixes the **login**") || len(mr.CheckList) != 2 || mr.CheckList[1].Status != "skip" {
 		t.Fatalf("%+v %v", mr, err)
+	}
+	if mr.Additions != 120 || mr.Deletions != 30 || mr.Files != 2 || len(mr.FileList) != 2 || mr.FileList[0].Path != "login.go" ||
+		strings.Join(mr.Labels, ",") != "bug,auth" || mr.Milestone != "v2" || mr.AutoMerge || mr.Created.IsZero() {
+		t.Errorf("what it changes: %+v", mr)
+	}
+	if len(mr.CommitList) != 1 || mr.CommitList[0].Author != "ana" || len(mr.Notes) != 1 || mr.Notes[0].Author != "bo" || mr.Comments != 1 {
+		t.Errorf("commits and comments: %+v %+v", mr.CommitList, mr.Notes)
+	}
+	var revs []string
+	for _, r := range mr.Reviewers {
+		revs = append(revs, r.Name+"="+r.State)
+	}
+	if strings.Join(revs, " ") != "bo=approved cy=changes core-team=pending" {
+		t.Errorf("who reviewed, then who is asked to and has not: %v", revs)
+	}
+	if got := last(calls()); !strings.Contains(got, "latestReviews") || !strings.Contains(got, "files") {
+		t.Errorf("the detail asks for more than the list: %q", got)
 	}
 }
 
@@ -170,12 +188,44 @@ esac`)
 		t.Errorf("no branch: all of them: %q", last(calls()))
 	}
 	jobs, err := github{}.Jobs(repo, "502")
-	if err != nil || len(jobs) != 2 || jobs[1].Status != "failure" || jobs[0].ID != "9001" {
+	if err != nil || len(jobs) != 2 || jobs[1].Status != "failure" || jobs[0].ID != "9001" || jobs[0].Duration() != 62*time.Second ||
+		len(jobs[1].Steps) != 1 || jobs[1].Steps[0].Status != "failure" {
 		t.Fatalf("jobs = %+v %v", jobs, err)
+	}
+	if jobs[1].Needs != nil {
+		t.Fatalf("without the workflow nothing is known of the needs: %+v", jobs[1])
 	}
 	log, err := github{}.Log(repo, "502", true)
 	if err != nil || !strings.Contains(log, "error: boom") || !strings.Contains(last(calls()), "run view 502 --log-failed") {
 		t.Fatalf("log = %q %v %q", log, err, last(calls()))
+	}
+}
+
+func TestGitHubReadsTheNeedsFromTheWorkflowOfTheRun(t *testing.T) {
+	calls := fakeTool(t, "gh", `case "$*" in
+*"--json jobs"*) cat "$D/gh-run-jobs.json";;
+*"actions/runs/503"*) echo '{"path":".github/workflows/ci.yml","head_sha":"cafe"}';;
+*"contents/.github/workflows/ci.yml?ref=cafe"*) printf 'jobs:\n  build: {}\n  test:\n    needs: build\n';;
+esac`)
+	repo := &Repo{Root: t.TempDir(), Slug: "owner/name"}
+	jobs, err := github{}.Jobs(repo, "503")
+	if err != nil || len(jobs) != 2 || strings.Join(jobs[1].Needs, ",") != "build" || jobs[0].Needs == nil {
+		t.Fatalf("jobs = %+v %v", jobs, err)
+	}
+	before := len(calls())
+	github{}.Jobs(repo, "503")
+	for _, c := range calls()[before:] {
+		if strings.Contains(c, "contents/") {
+			t.Fatal("a workflow at a commit is read once")
+		}
+	}
+}
+
+func TestGitHubWorkflowsAreTheOnesThatCanBeStarted(t *testing.T) {
+	fakeTool(t, "gh", `echo '[{"id":1,"name":"CI","path":".github/workflows/ci.yml","state":"active"},{"id":2,"name":"Old","path":".github/workflows/old.yml","state":"disabled_manually"},{"id":3,"name":"Dependabot Updates","path":"dynamic/dependabot/dependabot-updates","state":"active"}]'`)
+	wfs, err := github{}.Workflows(&Repo{Root: t.TempDir(), Slug: "o/n"})
+	if err != nil || len(wfs) != 1 || wfs[0].ID != "ci.yml" || wfs[0].Name != "CI (ci.yml)" {
+		t.Fatalf("%+v %v", wfs, err)
 	}
 }
 
@@ -184,15 +234,19 @@ func TestGitHubActionsRunTheRightCommands(t *testing.T) {
 	repo := &Repo{Root: t.TempDir(), Slug: "owner/name"}
 	g := github{}
 	for want, do := range map[string]func() error{
-		"pr review 41 --approve -R owner/name": func() error { return g.Approve(repo, "41") },
-		"pr close 41 -R owner/name":            func() error { return g.Close(repo, "41") },
-		"pr checkout 41 -R owner/name":         func() error { return g.Checkout(repo, "41") },
-		"pr merge 41 --squash -R owner/name":   func() error { return g.Merge(repo, "41", "squash") },
-		"pr merge 41 --rebase -R owner/name":   func() error { return g.Merge(repo, "41", "rebase") },
-		"pr merge 41 --merge -R owner/name":    func() error { return g.Merge(repo, "41", "merge") },
-		"run rerun 7 --failed -R owner/name":   func() error { return g.Rerun(repo, "7", true) },
-		"run rerun 7 -R owner/name":            func() error { return g.Rerun(repo, "7", false) },
-		"run cancel 7 -R owner/name":           func() error { return g.Cancel(repo, "7") },
+		"pr review 41 --approve -R owner/name":            func() error { return g.Approve(repo, "41") },
+		"pr close 41 -R owner/name":                       func() error { return g.Close(repo, "41") },
+		"pr checkout 41 -R owner/name":                    func() error { return g.Checkout(repo, "41") },
+		"pr merge 41 --squash -R owner/name":              func() error { return g.Merge(repo, "41", "squash") },
+		"pr merge 41 --rebase -R owner/name":              func() error { return g.Merge(repo, "41", "rebase") },
+		"pr merge 41 --merge -R owner/name":               func() error { return g.Merge(repo, "41", "merge") },
+		"run rerun 7 --failed -R owner/name":              func() error { return g.Rerun(repo, "7", true) },
+		"run rerun 7 -R owner/name":                       func() error { return g.Rerun(repo, "7", false) },
+		"run cancel 7 -R owner/name":                      func() error { return g.Cancel(repo, "7") },
+		"pr comment 41 --body hi there -R owner/name":     func() error { return g.Comment(repo, "41", "hi there") },
+		"pr ready 41 -R owner/name":                       func() error { return g.SetDraft(repo, "41", false) },
+		"pr ready 41 --undo -R owner/name":                func() error { return g.SetDraft(repo, "41", true) },
+		"workflow run ci.yml --ref feature -R owner/name": func() error { return g.Start(repo, "ci.yml", "feature") },
 	} {
 		if err := do(); err != nil {
 			t.Errorf("%s: %v", want, err)
@@ -205,6 +259,14 @@ func TestGitHubActionsRunTheRightCommands(t *testing.T) {
 	before := len(calls())
 	if err := g.Merge(repo, "41", "yolo; rm -rf /"); err == nil || len(calls()) != before {
 		t.Fatal("an unknown merge method must not reach gh")
+	}
+}
+
+func TestGitHubLogIsReadable(t *testing.T) {
+	got := ghLog("test\tRun go test\t2026-10-27T22:50:14.8586088Z --- FAIL: TestX\ntest\tRun go test\t2026-10-27T22:50:15Z FAIL\nlint\tUNKNOWN STEP\t2026-10-27T22:50:16Z ok")
+	want := "── test › Run go test\n--- FAIL: TestX\nFAIL\n── lint\nok"
+	if got != want {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -250,6 +312,41 @@ esac`)
 	}
 }
 
+func TestGitLabViewsOneMergeRequestWithAllItHas(t *testing.T) {
+	fakeTool(t, "glab", `case "$*" in
+*"merge_requests/5/approvals"*) echo '{"approved":true,"approved_by":[{"user":{"username":"bo"}}]}';;
+*"merge_requests/5/pipelines"*) echo '[]';;
+*"merge_requests/5/diffs"*) printf '%s' '[{"new_path":"a.go","diff":"@@ -1 +1,2 @@\n-old\n+new\n+more\n"}]';;
+*"merge_requests/5/commits"*) echo '[{"id":"abcdef123","title":"do it","author_name":"Ana"}]';;
+*"merge_requests/5/notes"*) echo '[{"body":"assigned to @bo","system":true,"author":{"username":"x"}},{"body":"why?","author":{"username":"cy"}}]';;
+*"merge_requests/5"*) echo '{"iid":5,"title":"T","state":"opened","labels":["ui"],"user_notes_count":1,"reviewers":[{"username":"bo"},{"username":"cy"}],"changes_count":"1"}';;
+esac`)
+	mr, err := gitlab{}.ViewMR(&Repo{Root: t.TempDir(), Slug: "o/n"}, "5")
+	if err != nil || mr.Review != "approved" || mr.Additions != 2 || mr.Deletions != 1 || len(mr.FileList) != 1 || mr.Files != 1 {
+		t.Fatalf("%+v %v", mr, err)
+	}
+	if len(mr.Reviewers) != 2 || mr.Reviewers[0].State != "approved" || mr.Reviewers[1].State != "pending" {
+		t.Errorf("reviewers = %+v", mr.Reviewers)
+	}
+	if len(mr.Notes) != 1 || mr.Notes[0].Author != "cy" || len(mr.CommitList) != 1 || mr.Labels[0] != "ui" {
+		t.Errorf("what GitLab says itself is not a comment: %+v %+v", mr.Notes, mr.CommitList)
+	}
+}
+
+func TestGitLabJobsGoInTheOrderOfThePipelineWithTheirNeeds(t *testing.T) {
+	fakeTool(t, "glab", `case "$*" in
+*graphql*) echo '{"data":{"project":{"pipeline":{"jobs":{"nodes":[{"name":"deploy","needs":{"nodes":[{"name":"build"}]}},{"name":"build","needs":{"nodes":[]}}]}}}}}';;
+*"/pipelines/9/jobs"*) echo '[{"id":73,"name":"deploy","status":"manual","stage":"deploy"},{"id":71,"name":"build","status":"success","stage":"build","started_at":"2026-10-26T10:00:00Z","finished_at":"2026-10-26T10:00:30Z"},{"id":72,"name":"test","status":"failed","stage":"test"}]';;
+esac`)
+	jobs, err := gitlab{}.Jobs(&Repo{Root: t.TempDir(), Slug: "o/n"}, "9")
+	if err != nil || len(jobs) != 3 || jobs[0].Name != "build" || jobs[2].Name != "deploy" || jobs[0].Duration() != 30*time.Second {
+		t.Fatalf("%+v %v", jobs, err)
+	}
+	if strings.Join(jobs[2].Needs, ",") != "build" || jobs[1].Needs != nil || jobs[0].Stage != "build" {
+		t.Fatalf("needs = %+v", jobs)
+	}
+}
+
 func TestGitLabLogIsTheTraceOfTheFailedJobs(t *testing.T) {
 	calls := fakeTool(t, "glab", `case "$*" in
 *"/jobs/72/trace"*) printf '\033[31;1mERROR: job failed\033[0m\nexit code 1\n';;
@@ -271,14 +368,18 @@ func TestGitLabActionsRunTheRightCommands(t *testing.T) {
 	repo := &Repo{Root: t.TempDir(), Slug: "owner/name"}
 	g := gitlab{}
 	for want, do := range map[string]func() error{
-		"mr approve 5 -R owner/name":                           func() error { return g.Approve(repo, "5") },
-		"mr close 5 -R owner/name":                             func() error { return g.Close(repo, "5") },
-		"mr checkout 5 -R owner/name":                          func() error { return g.Checkout(repo, "5") },
-		"mr merge 5 --yes --squash -R owner/name":              func() error { return g.Merge(repo, "5", "squash") },
-		"mr merge 5 --yes --rebase -R owner/name":              func() error { return g.Merge(repo, "5", "rebase") },
-		"mr merge 5 --yes -R owner/name":                       func() error { return g.Merge(repo, "5", "merge") },
-		"api -X POST projects/owner%2Fname/pipelines/9/retry":  func() error { return g.Rerun(repo, "9", true) },
-		"api -X POST projects/owner%2Fname/pipelines/9/cancel": func() error { return g.Cancel(repo, "9") },
+		"mr approve 5 -R owner/name":                             func() error { return g.Approve(repo, "5") },
+		"mr close 5 -R owner/name":                               func() error { return g.Close(repo, "5") },
+		"mr checkout 5 -R owner/name":                            func() error { return g.Checkout(repo, "5") },
+		"mr merge 5 --yes --squash -R owner/name":                func() error { return g.Merge(repo, "5", "squash") },
+		"mr merge 5 --yes --rebase -R owner/name":                func() error { return g.Merge(repo, "5", "rebase") },
+		"mr merge 5 --yes -R owner/name":                         func() error { return g.Merge(repo, "5", "merge") },
+		"api -X POST projects/owner%2Fname/pipelines/9/retry":    func() error { return g.Rerun(repo, "9", true) },
+		"api -X POST projects/owner%2Fname/pipelines/9/cancel":   func() error { return g.Cancel(repo, "9") },
+		"mr note 5 -m hi there -R owner/name":                    func() error { return g.Comment(repo, "5", "hi there") },
+		"mr update 5 --draft -R owner/name":                      func() error { return g.SetDraft(repo, "5", true) },
+		"mr update 5 --ready -R owner/name":                      func() error { return g.SetDraft(repo, "5", false) },
+		"api -X POST projects/owner%2Fname/pipeline?ref=fix%2Fa": func() error { return g.Start(repo, "pipeline", "fix/a") },
 	} {
 		if err := do(); err != nil {
 			t.Errorf("%s: %v", want, err)

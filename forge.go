@@ -24,13 +24,54 @@ type MR struct {
 	Review    string // approved | changes | review | ""
 	Checks    string // pass | fail | run | ""
 	Mergeable string
+	Created   time.Time
 	Updated   time.Time
 	CheckList []Check
+
+	// what the list knows when the forge tells it cheaply, and the detail always
+	Additions, Deletions int
+	Files                int // files changed (0: not known)
+	Labels               []string
+	Comments             int
+	Assignees            []string
+	Milestone            string
+	AutoMerge            bool
+
+	// only the detail (ViewMR)
+	Reviewers  []Reviewer
+	FileList   []File
+	CommitList []Commit
+	Notes      []Note
 }
 
 type Check struct {
 	Name   string
 	Status string // pass | fail | run | wait | skip
+}
+
+// Reviewer is someone asked to review, or who did: their word on it.
+type Reviewer struct {
+	Name  string
+	State string // approved | changes | commented | pending
+}
+
+type File struct {
+	Path                 string
+	Additions, Deletions int
+}
+
+type Commit struct {
+	SHA    string
+	Title  string
+	Author string
+	When   time.Time
+}
+
+// Note is a comment on a merge request.
+type Note struct {
+	Author string
+	Body   string
+	When   time.Time
 }
 
 // Run is a run of CI: a workflow run on GitHub, a pipeline on GitLab.
@@ -43,12 +84,42 @@ type Run struct {
 	Status  string // success | failure | running | queued | cancelled | skipped
 	URL     string
 	Created time.Time
+	SHA     string
 }
 
 type Job struct {
 	ID     string
 	Name   string
 	Status string
+	Stage  string
+	// Needs are the names of the jobs this one waits for; nil when the forge did not say, and then the jobs of the
+	// previous stage are
+	Needs    []string
+	Started  time.Time
+	Finished time.Time
+	Steps    []Step
+}
+
+type Step struct {
+	Name   string
+	Status string
+}
+
+// Duration is how long the job ran, or has been running: 0 when it has not started.
+func (j Job) Duration() time.Duration {
+	switch {
+	case j.Started.IsZero():
+		return 0
+	case j.Finished.IsZero():
+		return time.Since(j.Started)
+	}
+	return j.Finished.Sub(j.Started)
+}
+
+// Workflow is something CI can be started with on a branch: a workflow of GitHub, the pipeline of GitLab.
+type Workflow struct {
+	ID   string
+	Name string
 }
 
 // Forge is a place that hosts merge requests and CI, reached through its command line tool.
@@ -56,9 +127,11 @@ type Forge interface {
 	Kind() string   // github | gitlab
 	Prefix() string // "#" | "!": how its merge requests are numbered
 	ListMRs(r *Repo) ([]MR, error)
+	// ViewMR is a merge request with all that is known of it: reviewers, files, commits, comments
 	ViewMR(r *Repo, id string) (MR, error)
 	// ListRuns are the latest runs of a branch ("" for all of them)
 	ListRuns(r *Repo, branch string) ([]Run, error)
+	// Jobs of a run, with what they need when the forge can tell
 	Jobs(r *Repo, runID string) ([]Job, error)
 	// Log is the output of the jobs of a run, the failed ones only when failedOnly
 	Log(r *Repo, runID string, failedOnly bool) (string, error)
@@ -66,8 +139,16 @@ type Forge interface {
 	Merge(r *Repo, id, method string) error
 	Close(r *Repo, id string) error
 	Checkout(r *Repo, id string) error
+	Comment(r *Repo, id, body string) error
+	// SetDraft marks a merge request as a draft, or as ready for review
+	SetDraft(r *Repo, id string, draft bool) error
 	Rerun(r *Repo, runID string, failedOnly bool) error
 	Cancel(r *Repo, runID string) error
+	// Workflows are what Start can start
+	Workflows(r *Repo) ([]Workflow, error)
+	// Start runs CI on a branch now: a workflow (its file) on GitHub, a pipeline on GitLab
+	Start(r *Repo, workflow, branch string) error
+	Branches(r *Repo) ([]string, error)
 }
 
 type Repo struct {
