@@ -44,8 +44,8 @@ type app struct {
 	seen   map[string]string // "<root>|<branch>" → status of its latest run, to tell when one finishes
 
 	sched *schedules
-	// jobs are the jobs of the runs lately asked for, which the graph and the log both need: "<root>|<id>"
-	jobs map[string]cachedJobs
+	// cache keeps what the forge said, to show it at once and look again behind the scenes
+	cache *cache
 
 	open func(url string) error
 	now  func() time.Time
@@ -74,7 +74,7 @@ func (a *app) act(id string, r pluginsdk.ActionRequest) (*protocol.InvokeResult,
 func newApp() *app {
 	a := &app{
 		actions: map[string]actionFunc{}, repos: newRepos(), urls: map[string]string{}, runs: map[string]Run{}, mrOf: map[string]MR{}, runOf: map[string]Run{},
-		badges: map[string]string{}, seen: map[string]string{}, open: openBrowser, jobs: map[string]cachedJobs{}, now: time.Now,
+		badges: map[string]string{}, seen: map[string]string{}, open: openBrowser, cache: newCache(), now: time.Now,
 		sched: newSchedules(""),
 	}
 	a.afterAction = func() { go a.refresh() }
@@ -211,6 +211,7 @@ func (a *app) register() {
 		if err := repo.Forge.SetDraft(repo, id, draft); err != nil {
 			return nil, err
 		}
+		a.forgetMR(repo.Root, id)
 		a.afterAction()
 		if draft {
 			return pluginsdk.Done(protocol.ToneOK, fmt.Sprintf("%s%s is a draft now", repo.Forge.Prefix(), id), "mr"), nil
@@ -276,7 +277,9 @@ func (a *app) mrList(r pluginsdk.Request) (protocol.ViewData, error) {
 	if err != nil {
 		return noRepo(r.Context.Service, err)
 	}
-	mrs, err := repo.Forge.ListMRs(repo)
+	mrs, err := cached(a.cache, mrsKey(repo.Root), every[[]MR](freshFor), func() ([]MR, error) {
+		return repo.Forge.ListMRs(repo)
+	}, func(_, _ []MR) { a.n.Invalidate("mr", "list") })
 	if err != nil {
 		return protocol.ViewData{}, err
 	}
@@ -309,7 +312,9 @@ func (a *app) mrInfo(r pluginsdk.Request) (protocol.ViewData, error) {
 	if err != nil {
 		return protocol.ViewData{}, err
 	}
-	m, err := repo.Forge.ViewMR(repo, id)
+	m, err := cached(a.cache, mrKey(repo.Root, id), every[MR](freshFor), func() (MR, error) {
+		return repo.Forge.ViewMR(repo, id)
+	}, func(_, _ MR) { a.n.Invalidate("mr", "info") })
 	if err != nil {
 		return protocol.ViewData{}, err
 	}
@@ -513,7 +518,12 @@ func (a *app) ciList(r pluginsdk.Request) (protocol.ViewData, error) {
 	if all {
 		branch = ""
 	}
-	runs, err := repo.Forge.ListRuns(repo, branch)
+	runs, err := cached(a.cache, runsKey(repo.Root, branch), every[[]Run](freshFor), func() ([]Run, error) {
+		return repo.Forge.ListRuns(repo, branch)
+	}, func(old, cur []Run) {
+		a.forgetRuns(repo.Root, old, cur)
+		a.n.Invalidate("ci", "")
+	})
 	if err != nil {
 		return protocol.ViewData{}, err
 	}
@@ -564,36 +574,53 @@ func runTitle(title string) string {
 
 func isScheduled(id string) bool { return strings.HasPrefix(id, "at-") }
 
-// cachedJobs are the jobs of a run as the forge said them a moment ago.
-type cachedJobs struct {
-	jobs []Job
-	at   time.Time
+// freshFor is how long what the forge said is taken as it is, before asking again behind the scenes.
+const freshFor = 5 * time.Second
+
+// Keys of the cache: what was asked, of which repository.
+func mrsKey(root string) string          { return "mrs|" + root }
+func mrKey(root, id string) string       { return "mr|" + root + "|" + id }
+func runsKey(root, branch string) string { return "runs|" + root + "|" + branch }
+func jobsKey(root, id string) string     { return "jobs|" + root + "|" + id }
+func logKey(root, id string) string      { return "log|" + root + "|" + id }
+
+// live tells if a run still goes on: its jobs change, and what is known of a finished one does not.
+func live(jobs []Job) bool {
+	return len(jobs) == 0 || slices.ContainsFunc(jobs, func(j Job) bool { return j.Status == "running" || j.Status == "queued" })
 }
 
-// jobsTTL is how long the jobs of a run are taken as they are: the graph and the log ask for them together.
-const jobsTTL = 5 * time.Second
+func liveFor(jobs []Job) time.Duration {
+	if live(jobs) {
+		return freshFor
+	}
+	return forever
+}
 
+// jobsOf are the jobs of a run, which the graph and the log both need.
 func (a *app) jobsOf(repo *Repo, id string) ([]Job, error) {
-	key := repo.Root + "|" + id
-	a.mu.Lock()
-	c, ok := a.jobs[key]
-	a.mu.Unlock()
-	if ok && time.Since(c.at) < jobsTTL {
-		return c.jobs, nil
+	return cached(a.cache, jobsKey(repo.Root, id), liveFor, func() ([]Job, error) {
+		return repo.Forge.Jobs(repo, id)
+	}, func(_, _ []Job) { a.n.Invalidate("ci", "") })
+}
+
+// forgetRuns drops what is kept of the runs that are not what they were, or of all of them with no old list.
+func (a *app) forgetRuns(root string, old, cur []Run) {
+	before := map[string]string{}
+	for _, r := range old {
+		before[r.ID] = r.Status
 	}
-	jobs, err := repo.Forge.Jobs(repo, id)
-	if err != nil {
-		return nil, err
-	}
-	a.mu.Lock()
-	for k, v := range a.jobs {
-		if time.Since(v.at) > jobsTTL {
-			delete(a.jobs, k)
+	for _, r := range cur {
+		if st, ok := before[r.ID]; ok && st != r.Status {
+			a.cache.drop(jobsKey(root, r.ID), logKey(root, r.ID))
 		}
 	}
-	a.jobs[key] = cachedJobs{jobs: jobs, at: time.Now()}
-	a.mu.Unlock()
-	return jobs, nil
+}
+
+// forgetMR and forgetRun drop what an action made out of date, for the next look to go to the forge.
+func (a *app) forgetMR(root, id string) { a.cache.drop(mrsKey(root), mrKey(root, id)) }
+
+func (a *app) forgetRun(root, id string) {
+	a.cache.drop("runs|"+root+"|", jobsKey(root, id), logKey(root, id))
 }
 
 // scheduledText is what the panes of a run say about one that is only scheduled.
@@ -744,7 +771,9 @@ func (a *app) ciLog(r pluginsdk.Request) (protocol.ViewData, error) {
 		lines = append(lines, pluginsdk.Line(pluginsdk.Span(msg, protocol.ToneMuted)))
 	}
 	if failed {
-		out, err := repo.Forge.Log(repo, id, true)
+		out, err := cached(a.cache, logKey(repo.Root, id), func(string) time.Duration { return liveFor(jobs) }, func() (string, error) {
+			return repo.Forge.Log(repo, id, true)
+		}, func(_, _ string) { a.n.Invalidate("ci", "log") })
 		if err != nil {
 			return protocol.ViewData{}, err
 		}
@@ -951,6 +980,7 @@ func (a *app) startRun(r pluginsdk.ActionRequest) (*protocol.InvokeResult, error
 		if err := repo.Forge.Start(repo, workflow, branch); err != nil {
 			return nil, err
 		}
+		a.cache.drop("runs|" + repo.Root + "|")
 		a.afterAction()
 		return pluginsdk.Done(protocol.ToneOK, fmt.Sprintf("started %s on %s", name, branch), "ci"), nil
 	}
@@ -983,6 +1013,7 @@ func (a *app) fireDue() {
 			a.n.Toast(protocol.ToneError, fmt.Sprintf("scheduled %s on %s: %v", x.Name, x.Branch, err))
 			continue
 		}
+		a.cache.drop("runs|" + x.Root + "|")
 		a.n.Toast(protocol.ToneOK, fmt.Sprintf("started %s on %s, as scheduled", x.Name, x.Branch))
 	}
 	if len(start)+len(missed) > 0 {
@@ -1024,6 +1055,7 @@ func (a *app) onMR(done string, do func(f Forge, repo *Repo, id string, inputs m
 		if err := do(repo.Forge, repo, id, r.Inputs); err != nil {
 			return nil, err
 		}
+		a.forgetMR(repo.Root, id)
 		a.afterAction()
 		return pluginsdk.Done(protocol.ToneOK, fmt.Sprintf("%s %s%s", done, repo.Forge.Prefix(), id), "mr"), nil
 	}
@@ -1051,6 +1083,7 @@ func (a *app) onRun(done, view string, do func(f Forge, repo *Repo, run Run) err
 		if err := do(repo.Forge, repo, run); err != nil {
 			return nil, err
 		}
+		a.forgetRun(repo.Root, id)
 		a.afterAction()
 		return pluginsdk.Done(protocol.ToneOK, fmt.Sprintf("run %s %s", id, done), view), nil
 	}
@@ -1119,6 +1152,7 @@ func (a *app) refresh() {
 			rd = &repoData{repo: repo, mrs: map[string]MR{}, runs: map[string]Run{}}
 			byRoot[repo.Root] = rd
 			if mrs, err := repo.Forge.ListMRs(repo); err == nil {
+				put(a.cache, mrsKey(repo.Root), mrs, func(_, _ []MR) { a.n.Invalidate("mr", "list") })
 				for _, m := range mrs {
 					rd.mrs[m.Branch] = m
 				}
@@ -1135,9 +1169,16 @@ func (a *app) refresh() {
 			key := repo.Root + "|" + repo.Branch
 			run, ok := rd.runs[key]
 			if !ok {
-				if runs, err := repo.Forge.ListRuns(repo, repo.Branch); err == nil && len(runs) > 0 {
-					run, ok = runs[0], true
-					rd.runs[key] = run
+				if runs, err := repo.Forge.ListRuns(repo, repo.Branch); err == nil {
+					root := repo.Root
+					put(a.cache, runsKey(root, repo.Branch), runs, func(old, cur []Run) {
+						a.forgetRuns(root, old, cur)
+						a.n.Invalidate("ci", "")
+					})
+					if len(runs) > 0 {
+						run, ok = runs[0], true
+						rd.runs[key] = run
+					}
 				}
 			}
 			if ok {

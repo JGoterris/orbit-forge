@@ -136,7 +136,8 @@ func newTestApp(t *testing.T, f *fakeForge) (*app, *recorder) {
 	rec := newRecorder()
 	a.n = rec
 	a.p = pluginsdk.New()
-	a.afterAction = func() {} // the tests look at what an action did, not at the refresh that follows
+	a.cache.spawn = func(f func()) { f() } // the questions behind the scenes are answered before the test goes on
+	a.afterAction = func() {}              // the tests look at what an action did, not at the refresh that follows
 	a.register()
 	a.repos.git = func(dir string, args ...string) (string, error) {
 		if dir == "/norepo" {
@@ -305,7 +306,7 @@ func TestCILogShowsTheJobsAndTheFailedOnes(t *testing.T) {
 		t.Error("a job that passed is in the graph, not among the failures")
 	}
 	f.jobs = []Job{{ID: "1", Name: "build", Status: "success"}}
-	a.jobs = map[string]cachedJobs{}
+	a.cache.drop("jobs|")
 	f.reset()
 	a.ciLog(req("api", map[string]string{"list": "7"}))
 	for _, c := range f.did() {
